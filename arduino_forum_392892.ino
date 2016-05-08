@@ -1,4 +1,12 @@
+// #define DEBUG
 
+#ifdef DEBUG
+#define log(a) Serial.print(a)
+#define logln(a) Serial.println(a)
+#else
+#define log(a)
+#define logln(a)
+#endif
 
 ///////////// STATE MACHINES /////////////
 
@@ -19,6 +27,18 @@ enum CycleState {
 
 unsigned long cycleStateStartMs = 0;
 
+#ifdef DEBUG
+// these are the DEBUG/TEST values
+
+// charge for 2 seconds, then check voltage
+const unsigned long chargeTimeMs = 5L * 1000L;
+// turn off relay .5 seconds to check the voltage
+const unsigned long voltageCheckMs = 500L;
+// discharge for 1 seconds, then check voltage
+const unsigned long dischargeTimeMs = 3L * 1000L;
+#else 
+
+
 // charge for 5 minutes, then check voltage
 const unsigned long chargeTimeMs = 5L * 60L * 1000L;
 
@@ -27,6 +47,8 @@ const unsigned long voltageCheckMs = 5L * 1000L;
 
 // discharge for 2 minutes, then check voltage
 const unsigned long dischargeTimeMs = 2L * 60L * 1000L;
+#endif
+
 
 const int lowVThreshhold = 40; // .2v / 5v * 1023
 const int highVThreshhold = 450; // 2.2v / 5v * 1023
@@ -151,6 +173,11 @@ RelayCluster *cluster; // should use a refernce, but it's being a nuisance
 BlinkyLight blinky(13);
 
 void setup() {
+#ifdef DEBUG
+  Serial.begin(57600);
+  while (!Serial);
+#endif
+
   forward.setup();
   reverse.setup();
   blinky.setup();
@@ -167,8 +194,8 @@ void loop() {
 void polarityState_loop() {
   if (polarityState != NOT_DETERMINED) return;
 
-  boolean forwardOk = analogRead(forward.detectVoltageAPin) > lowVThreshhold;
-  boolean reverseOk = analogRead(reverse.detectVoltageAPin) > lowVThreshhold;
+  boolean forwardOk = forward.readVoltage() > lowVThreshhold;
+  boolean reverseOk = reverse.readVoltage() > lowVThreshhold;
 
   if (forwardOk && reverseOk) {
     polarityState = ERROR_CHECKING_POLARITY;
@@ -188,7 +215,9 @@ void polarityState_loop() {
 void cycleState_loop() {
   switch (cycleState) {
     case NOT_STARTED:
-      if(polarityState != FORWARD && polarityState != REVERSE) break;
+      if (polarityState != FORWARD && polarityState != REVERSE) break;
+
+      logln("NOT_STARTED");
 
       // start the charge cycle appropriate for the polarity
       if (polarityState == FORWARD) {
@@ -198,16 +227,21 @@ void cycleState_loop() {
         cluster = &reverse;
       }
 
+      logln("-> CHARGING");
+
       cluster->charge();
       cycleState = CHARGING;
       cycleStateStartMs = millis();
       break;
 
     case CHARGING:
-      if(millis() - cycleStateStartMs < chargeTimeMs) break;
-      
+      if (millis() - cycleStateStartMs < chargeTimeMs) break;
+
+      logln("CHARGING");
+
       // transition to test voltage
-      
+
+      logln("-> CHARGING_TEST_VOLTAGE");
       cluster->off();
       blinky.on();
       cycleState = CHARGING_TEST_VOLTAGE;
@@ -215,16 +249,20 @@ void cycleState_loop() {
       break;
 
     case CHARGING_TEST_VOLTAGE:
-      if(millis() - cycleStateStartMs < voltageCheckMs) break;
-      
+      if (millis() - cycleStateStartMs < voltageCheckMs) break;
+
+      logln("CHARGING_TEST_VOLTAGE");
+
       // transition to discharge or to continue charging
-      
-      if(cluster->readVoltage() < highVThreshhold) {
+
+      if (cluster->readVoltage() < highVThreshhold) {
+        logln("-> CHARGING");
         cluster->charge();
         cycleState = CHARGING;
         cycleStateStartMs = millis();
       }
       else {
+        logln("-> DISCHARGING");
         cluster->discharge();
         cycleState = DISCHARGING;
         cycleStateStartMs = millis();
@@ -232,10 +270,13 @@ void cycleState_loop() {
       break;
 
     case DISCHARGING:
-      if(millis() - cycleStateStartMs < dischargeTimeMs) break;
+      if (millis() - cycleStateStartMs < dischargeTimeMs) break;
+
+      logln("DISCHARGING");
 
       // transition to test voltage
-      
+
+      logln("-> DISCHARGING_TEST_VOLTAGE");
       cluster->off();
       blinky.on();
       cycleState = DISCHARGING_TEST_VOLTAGE;
@@ -243,16 +284,19 @@ void cycleState_loop() {
       break;
 
     case DISCHARGING_TEST_VOLTAGE:
-      if(millis() - cycleStateStartMs < voltageCheckMs) break;
-      
+      if (millis() - cycleStateStartMs < voltageCheckMs) break;
+
+      logln("DISCHARGING_TEST_VOLTAGE");
       // transition to contuniung discharge or to flipping the polarity and restarting cycle
-      
-      if(cluster->readVoltage() >= lowVThreshhold) {
+
+      if (cluster->readVoltage() >= lowVThreshhold) {
+        logln("-> DISCHARGING");
         cluster->discharge();
         cycleState = DISCHARGING;
         cycleStateStartMs = millis();
       }
       else {
+        logln("-> NOT_STARTED");
         blinky.off();
         cycleState = NOT_STARTED;
         polarityState = polarityState == REVERSE ? FORWARD : REVERSE;
